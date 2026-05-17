@@ -1,0 +1,163 @@
+[
+  {
+    "id": "T01",
+    "title": "Bootstrap monorepo (pnpm workspaces + Vite/React/TS/Tailwind + Fastify/Drizzle/SQLite + shared package)",
+    "description": "- Root `package.json` with `pnpm-workspace.yaml` listing `apps/*` and `packages/*`.\n- `tsconfig.base.json` shared.\n- `packages/shared` initialized (TS, exports `src/index.ts`).\n- `apps/web`: Vite + React 18 + TS + Tailwind (brand colors `#0F1B3D` navy, `#FF6A1A` orange, white bg) + react-router + TanStack Query + Vitest with jsdom.\n- `apps/backend`: Fastify + better-sqlite3 + Drizzle + tsx dev script + multipart + cors plugins.\n- Root scripts: `dev` runs backend + web in parallel; backend exposes `db:migrate`.\n- README with the 3 setup commands.\n- Smoke test: `pnpm dev` boots both apps; root vitest runs zero tests cleanly.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T02",
+    "title": "Shared Zod schemas & TS types for all entities",
+    "description": "- In `packages/shared/src` create files for User, Event, Photo, Participant, PhotiTransaction, Job per the spec.\n- Each entity has Zod schema + inferred type + status enums (`EventStatus`, `PhotoStatus`, `JobStatus`, `PhotiTxnType`).\n- Export `CreateEventInput`, `FoyerData`, common API DTOs.\n- `index.ts` re-exports all.\n- Vitest coverage: schema parse happy/failure for at least User, Event, Photo, Participant.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T03",
+    "title": "Backend DB schema + migrations + identify middleware (x-user-id, signup bonus)",
+    "description": "- Drizzle schema for users, events, photos, participants, photi_transactions, jobs with indexes `photos(eventId,status)` and `participants(eventId,userId)`.\n- `db:migrate` script generates + applies SQLite migrations.\n- Fastify `identify` plugin: reads `x-user-id` header; if missing return 400; if user row missing, create + insert 100 Photi `signup_bonus` PhotiTransaction in a single transaction.\n- `GET /me` returns balance + last 20 transactions.\n- Vitest: spin up Fastify in-memory; first request creates user with balance=100; second request reuses same user.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T04",
+    "title": "Local storage adapter + /files proxy + sharp thumbnails + EXIF takenAt",
+    "description": "- `storage/localAdapter.ts` implements `putObject(key, buffer)`, `getSignedUrl(key, ttl)` returning `/files/{urlEncodedKey}`, `getStream(key)`, `remove(key)`.\n- `GET /files/:key` streams binary with proper content-type.\n- `services/thumbnail.ts` uses sharp to produce 400px webp.\n- `services/exif.ts` parses takenAt with exifr (or sharp metadata) returning ISO string or null.\n- Vitest: round-trip put+get; thumbnail produces webp; takenAt extracted from a fixture JPG.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T05",
+    "title": "Event endpoints (CRUD, publish, archive, QR) + slug generator",
+    "description": "- `POST /events` validates `CreateEventInput`, generates slug `{kebab(title)}-{6chrandom}` (collision retry), persists.\n- `GET /events/mine`, `GET /events/:slug` (public meta only), `PATCH /events/:id` (owner check), `POST /events/:id/publish`, `POST /events/:id/archive`.\n- `GET /events/:id/qr` returns PNG via qrcode package, URL = `${PUBLIC_BASE}/e/{slug}`.\n- Vitest: owner can mutate; non-owner gets 403; slug regex matches; QR endpoint returns image/png.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T06",
+    "title": "Photo upload + list + delete + isFeatured toggle endpoints (jobs queued)",
+    "description": "- `POST /events/:id/photos` accepts multipart (multiple), for each: store full + 400px webp thumb, parse EXIF takenAt, insert Photo with status=`processing`, enqueue Job(`process-photo`, {photoId}).\n- `GET /events/:id/photos` paginated, returns signed URLs for full + thumb + matchCount + status.\n- `DELETE /photos/:id` removes DB row + storage objects.\n- `PATCH /photos/:id` toggles `isFeatured` (broadcast to foyer hub stub).\n- Vitest: upload returns 201 + photo records with status processing; pagination works; delete removes from storage adapter mock.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T07",
+    "title": "Job queue worker + face-api pipeline (process-photo) + Photi billing",
+    "description": "- Jobs table polled every 2000ms; pick `queued` rows, mark `running`, on error increment attempts (max 3 \u2192 `failed`).\n- `services/faceApi.ts` boots tfjs-node + @vladmandic/face-api, lazy-loads ssd_mobilenetv1 + face_landmark_68 + face_recognition from `public/models`. Provides `detectAndEmbed(buffer): number[][]`.\n- `scripts/download-models.mjs` downloads model files if missing.\n- `services/matching.ts` cosine distance with threshold 0.5.\n- `processPhoto` job: embed \u2192 for each event participant compute distance \u2192 collect new userIds \u2192 debit organizer (1 Photi per match, single transaction). If insufficient balance \u2192 set status=`awaiting_credit`, do not write matches.\n- `matchSelfie` job (or inline) does the inverse on selfie upload.\n- `retry-awaiting` job is enqueued after `POST /billing/purchase`.\n- Vitest with mocked face-api (returns deterministic vectors): matches across threshold; debit logic; awaiting_credit branch.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T08",
+    "title": "Participant join + selfie + my-photos + delete-my-data + billing endpoints",
+    "description": "- `POST /events/:slug/join` upserts Participant for (event,user).\n- `POST /participants/:id/selfie` multipart, stores selfie, runs face detect+embed (single face expected; reject if 0 or >1 with 422), persists faceVector, enqueues `match-selfie` job.\n- `GET /me/photos?eventId=X` returns photos where `matchedUserIds` includes user.\n- `GET /events/:id/participants` (owner) returns list with selfie thumb URL + match count.\n- `DELETE /participants/:id` removes selfie file, nulls faceVector, removes user from all matchedUserIds in that event.\n- `GET /billing/packages` static `[100/\u20ba99, 500/\u20ba449, 2000/\u20ba1499]`.\n- `POST /billing/purchase` { packageId } credits user, writes PhotiTransaction `purchase`, enqueues `retry-awaiting` for any of user's events.\n- Vitest: full happy path with deterministic vectors; delete-my-data cleans matches.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T09",
+    "title": "Foyer SSE hub + foyer-data endpoint",
+    "description": "- `sse/foyerHub.ts` keeps `Map<eventId, Set<reply>>`; broadcast on photo `isFeatured` change or new ready photo.\n- `GET /events/:id/foyer-stream` keeps connection open, sends keepalive every 15s.\n- `GET /events/:slug/foyer-data` public: returns event branding + featured photos (signed URLs) + counts (participants, ready photos, distribution count from PhotiTransactions).\n- Vitest: hub broadcast hits subscriber; foyer-data shape matches `FoyerData` schema.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T10",
+    "title": "Web foundation: API client (x-user-id), router, layouts, theme, userId bootstrap",
+    "description": "- `lib/userId.ts`: read/write `photi:userId` UUID in localStorage (crypto.randomUUID).\n- `src/api/client.ts`: fetch wrapper auto-injecting `x-user-id`, JSON helpers, multipart helper, base URL via Vite env.\n- `router.tsx` with routes: `/`, `/events/new`, `/events/:id`, `/billing`, `/e/:slug`, `/e/:slug/selfie`, `/e/:slug/gallery`, `/e/:slug/foyer`.\n- `OrganizerLayout` (TopBar + BalanceBadge + LowCreditBanner) and `ParticipantLayout` (mobile, brandingColor CSS var).\n- TanStack Query provider + default options.\n- Vitest: client adds header; userId persists across mounts; LowCreditBanner appears when balance<10.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T11",
+    "title": "Organizer pages: Home, NewEvent, EventDetail tabs (Photos w/ Dropzone+Lightbox, Participants, Settings, QR), Billing",
+    "description": "- `Home`: grid of `events/mine` with status chip + cover.\n- `NewEvent`: form (title, dates, brand color, logo upload) \u2192 POST then redirect.\n- `EventDetail`: tabs.\n  - PhotosTab: Dropzone (parallel 4 with retry), grid of thumbs (lazy), badge with matchCount + isFeatured toggle, Lightbox modal.\n  - ParticipantsTab: list with selfie thumb + match count.\n  - SettingsTab: edit metadata + Publish/Archive buttons.\n  - QrTab: QR PNG download + copy share link.\n- `Billing`: balance card, package grid, mock card UI modal, POST purchase.\n- LowCreditBanner shows when `photiBalance < 10` with awaiting count.\n- Vitest component tests: Dropzone enqueues uploads; Lightbox opens/closes; Publish disabled when no photos.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T12",
+    "title": "Participant pages (EventLanding, Selfie w/ getUserMedia, Gallery polling+Notification, Foyer SSE) + polish (a11y, Docker, README)",
+    "description": "- EventLanding: cover + title + 'Kat\u0131l' CTA \u2192 POST join \u2192 /selfie.\n- Selfie: getUserMedia, live preview, capture canvas, upload with progress, \u2713 screen, privacy note + 'Verimi Sil' (DELETE participant) link.\n- Gallery: my-photos query with `refetchInterval: 5000`, download button per photo, request Notification permission on first match, fire notification on count delta.\n- Foyer: full-screen rotation 6s, SSE subscription, F key fullscreen toggle, 30s heartbeat watchdog \u2192 `location.reload()`, header logo + QR, footer counters.\n- A11y pass: focus rings, aria-labels, alt text, prefers-reduced-motion respected for carousel.\n- `apps/backend/Dockerfile` (node:20-alpine, copy build, expose 3000, runs migrate + start).\n- `apps/web` static build outputs `dist/`.\n- README: 3-command setup, end-to-end manual test scenario from spec (1 organizer + 3 participants + 20 photos).\n- Vitest: Selfie capture flow; Gallery fires notification on new match; Foyer rotates after 6s with fake timers.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T13",
+    "title": "Job runner crash recovery: reset stuck `running` jobs on boot",
+    "description": "Reliability gap not currently covered: if the server is killed mid-job, the row stays `status='running'` forever and `runOnce()` (which only picks `queued`) never retries it. Fix:\n- Add `JobRunner.recover()` (or inline in constructor/`start`) that on boot finds rows with `status='running'`, increments `attempts`, and either re-queues (`status='queued'`, set `lastError='interrupted'`) or marks `failed` if `attempts >= MAX_ATTEMPTS`.\n- Call recovery from `buildServer` before `runner.start()` so prod boots clean.\n- Vitest: insert a fake `running` row, call recover, assert it flips to `queued` (or `failed` after max attempts) and a subsequent `runOnce` picks it up.\n- Keep the change additive \u2014 do not alter happy-path queue semantics.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T14",
+    "title": "End-to-end happy-path integration test (organizer \u2192 participant \u2192 distribution)",
+    "description": "Single Vitest spec under `apps/backend/src/__tests__/e2e.test.ts` exercising the full contract via the real Fastify server + fake face engine:\n1. Organizer (user A) `POST /events` \u2192 publish.\n2. Upload 3 fixture photos via `POST /events/:id/photos`.\n3. Two participants (B, C) `POST /events/:slug/join` then `POST /participants/:id/selfie` with deterministic vectors.\n4. Drain the job queue.\n5. Assert: `GET /me/photos?eventId=...` returns the right matches per participant; organizer balance decreased by exactly `matchCount`; photos all `status='ready'`; `GET /events/:slug/foyer-data` returns expected counts.\n6. `DELETE /participants/:id` for B \u2192 assert B removed from `matchedUserIds` and selfie file gone.\nReuses `buildTestServer` + `fakeFaceEngine`. Acts as a regression net spanning T03-T09.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T15",
+    "title": "Demo seed script for the README manual QA scenario",
+    "description": "Spec mandates a manual test scenario (1 organizer + 3 participants + 20 photos) in the README. Make it one command:\n- `apps/backend/scripts/seed-demo.mjs` (or ts via tsx) that uses the in-process services to: create demo organizer, create event 'Photi Demo', upload 20 fixture jpgs from `scripts/fixtures/` (or generates colored placeholders via sharp), join 3 participant UUIDs with synthetic selfie buffers, drain the job queue.\n- Wire `pnpm --filter backend run seed:demo` script.\n- Print resulting organizer userId, share link `/e/:slug`, and three participant userIds at the end so a human can paste them into localStorage to walk the flow.\n- Idempotent: re-running drops & recreates the demo event.\n- README updated with the new command at the bottom of the manual scenario section.\n- No new test required (script itself is the smoke) but a tiny vitest that imports the seed module against an in-memory server is welcome.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T16",
+    "title": "Upload mime-type validation: reject non-image bodies on photos + selfie endpoints",
+    "description": "Hardening pass \u2014 current upload handlers silently swallow non-image parts (`makeThumbnail` try/catch in `routes/photos.ts`) and the selfie route persists any buffer as `image/jpeg`. This is a real ingestion gap: a malicious or buggy client can write garbage into storage, and the user gets no actionable error.\n\nDo:\n- In `POST /events/:id/photos`, if a file `part.mimetype` is not in `image/jpeg|image/png|image/webp|image/heic|image/heif`, skip and collect a `rejected[]` array; if zero accepted at the end, return 415 with `{ code: 'no_supported_images', rejected }`. Otherwise return 201 with both `created` and `rejected`. Replace the silent thumbnail try/catch with this explicit allow-list.\n- In `POST /participants/:id/selfie`, validate the same allow-list before calling `faceEngine.detectAndEmbed`; on mismatch return 415 `{ code: 'unsupported_image_type', got: mimetype }`. Persist with the actual mimetype passed through to `storage.putObject` (rename selfieKey extension by mimetype, or store as `.jpg` after sharp normalization \u2014 pick one, document it).\n- Keep `req.isMultipart()` 415 path untouched.\n- Vitest:\n  - photos route test: upload one valid jpg + one `text/plain` part \u2192 201, response includes `rejected: [{ filename, mimetype: 'text/plain' }]`, only one Photo row created.\n  - photos route test: upload only `text/plain` \u2192 415 `no_supported_images`.\n  - participants route test: selfie with `application/octet-stream` \u2192 415 `unsupported_image_type`, no DB write, no storage put.\n- Do not change shared types unless needed for the new response shape; if so, extend `packages/shared` with a `PhotoUploadResult` DTO and update the web Dropzone error toast to surface `rejected[]` filenames (best-effort, only if straightforward).",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T17",
+    "title": "Friendly 413 + per-part oversize handling for multipart uploads",
+    "description": "Server already configures `@fastify/multipart` with `limits.fileSize: 25MB` and `files: 200`, but when a client exceeds either limit Fastify throws `RequestFileTooLarge` / `RequestFileCountExceeded` mid-stream and the request currently surfaces as a generic 500. The web Dropzone shows an opaque error and the user can't tell what went wrong. Close the loop:\n\n- Add a Fastify `setErrorHandler` (or per-route try/catch) in `apps/backend/src/server.ts` that maps:\n  - `FST_REQ_FILE_TOO_LARGE` (and `err.code === 'FST_FILES_LIMIT'`) \u2192 `reply.code(413).send({ code: 'file_too_large', limitBytes: 25*1024*1024 })`.\n  - Generic multipart parse errors (`err.code` starting with `FST_`) \u2192 400 `{ code: err.code }`.\n  - Pass everything else through to Fastify's default error handler.\n- In `POST /events/:id/photos`: when a `part.toBuffer()` rejects with `FST_REQ_FILE_TOO_LARGE`, append the part's filename to a `rejectedTooLarge[]` array (do NOT abort the whole batch \u2014 other parts in the same request should still process). Include this list in the 201 response alongside the existing `rejected[]` from T16.\n- In `POST /participants/:id/selfie`: catch the same error and return 413 directly (single-file endpoint, no partial success).\n- Web `apps/web/src/components/Dropzone.tsx` (or wherever upload toasts live) surfaces the new `rejectedTooLarge[]` filenames with a 'Dosya \u00e7ok b\u00fcy\u00fck (max 25 MB)' message.\n- Vitest:\n  - photos route: stub a part whose `toBuffer` throws `Object.assign(new Error('too big'), { code: 'FST_REQ_FILE_TOO_LARGE' })` \u2192 response 201, `rejectedTooLarge` populated, no Photo row written for that part.\n  - selfie route: same stub \u2192 413 `file_too_large`, no DB write, no storage put.\n  - error-handler unit test: post a body that triggers the multipart limit and assert 413 (use a tiny `limits.fileSize` override in `buildTestServer`).\n- Do not change the configured 25MB / 200-file caps.\n- Coordinate with T16: if T16 already restructured the upload response shape, extend that DTO instead of inventing a parallel one \u2014 `rejectedTooLarge` belongs alongside `rejected`.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T18",
+    "title": "Broadcast `photo-ready` from processPhoto so foyer reflects late-arriving featured photos",
+    "description": "Real product gap: `FoyerEvent` declares `type: 'photo-ready'` and the foyer SSE wiring is in place, but `processPhoto` never broadcasts it. Result: if an organizer toggles `isFeatured` on a photo BEFORE its job finishes (UI allows it, status was `processing`), the `photo-featured` SSE fires but `/foyer-data` filters by `status='ready'` so the photo doesn't appear. When the job later flips status to `ready`, no broadcast \u2192 the foyer screen keeps the stale carousel until next manual reload.\n\nDo:\n- Pass the existing `foyerHub` into `JobRunner` (already injected in `buildServer`; thread it through `JobRunner` \u2192 `processPhoto`).\n- In `processPhoto`, after the DB update that sets `status='ready'` (both the no-match branch AND the matched-in-transaction branch), call `foyerHub.broadcast({ eventId, type: 'photo-ready', photoId, isFeatured: photo.isFeatured })`. Do NOT broadcast on `awaiting_credit`.\n- In the web Foyer page (`apps/web/src/pages/Foyer.tsx` or equivalent), on receiving a `photo-ready` event re-fetch `/events/:slug/foyer-data` (invalidate the TanStack Query) so the carousel picks up the new entry. The existing `photo-featured` handler likely already does the same \u2014 share the handler.\n- Vitest backend: in `processPhoto.test.ts` add a spy `foyerHub` whose `broadcast` is a `vi.fn()`; after running processPhoto on a photo with one match, assert `broadcast` was called once with `type: 'photo-ready'` and the right `photoId` / `eventId`. Also assert it is NOT called when status flips to `awaiting_credit`.\n- Vitest web: extend the existing Foyer test to dispatch a synthetic `photo-ready` SSE message and assert the foyer-data query is invalidated/refetched.\n- Keep the change additive: no schema changes, no new endpoints.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T19",
+    "title": "Mirror foyer `photo-ready` broadcast on the matchSelfie + retryAwaiting paths",
+    "description": "Sibling of T18 \u2014 addresses the inverse path. `matchSelfie` and `retryAwaiting` can both flip a photo's status from `awaiting_credit` \u2192 `ready` (when a participant joins after a billing top-up, or when the organizer purchases credits). Today neither broadcasts on the foyer hub, so the same staleness bug T18 fixes for `processPhoto` repeats here: if the photo was already marked `isFeatured`, the foyer carousel won't see it until next manual reload.\n\nPrereq: T18 lands first (it threads `foyerHub` through `JobRunnerDeps`).\n\nDo:\n- In `apps/backend/src/jobs/matchSelfie.ts`: accept `foyerHub` from `MatchSelfieDeps` (or read from the runner deps the same way `processPhoto` does post-T18). After the inner transaction sets `status='ready'` for a photo, call `foyerHub.broadcast({ eventId: event.id, type: 'photo-ready', photoId: photo.id, isFeatured: photo.isFeatured })`. Do NOT broadcast when the branch flips status to `awaiting_credit`.\n- In `apps/backend/src/jobs/retryAwaiting.ts`: same treatment for any photo that successfully transitions out of `awaiting_credit` into `ready`. If retryAwaiting delegates to `processPhoto` internally, no extra broadcast is needed (T18 covers it) \u2014 verify and document which path you took with a one-line comment.\n- Reuse the test plumbing from T18: extend `matchSelfie.test.ts` (or add `__tests__/matchSelfie-broadcast.test.ts`) with a `vi.fn()` foyerHub. Assert `broadcast` is called once per photo that flipped to `ready`, with the correct `eventId` / `photoId` / `isFeatured`, and is NOT called when the bill fails (`awaiting_credit` branch). Add a parallel test for `retryAwaiting` covering at least one happy-path transition.\n- No web change required \u2014 the Foyer page handler from T18 already consumes `photo-ready` for any source.\n- Keep the change additive: no schema changes, no new endpoints, no behavioral change to non-broadcast paths.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T20",
+    "title": "Broadcast `photo-removed` on DELETE /photos/:id so the foyer drops deleted featured photos immediately",
+    "description": "Mirror gap to T18/T19 on the destroy path. Today `DELETE /photos/:id` removes the storage objects + DB row but never tells the foyer hub. If the deleted photo was `isFeatured` and `ready`, the live TV carousel keeps cycling its now-broken `<img src={fullUrl}>` (storage 404'd) until either the next 30s `foyer-data` refetchInterval or the watchdog reload. Visible UX bug during a real event.\n\nDo:\n- Extend `FoyerEvent` in `apps/backend/src/sse/foyerHub.ts` with a new variant: `{ eventId, type: 'photo-removed', photoId }`. Update the union, the SSE `send()` switch in `apps/backend/src/routes/foyer.ts`, and any exhaustive consumers.\n- In `apps/backend/src/routes/photos.ts` `DELETE /photos/:id`, after the storage removes + DB delete succeed, call `foyerHub.broadcast({ eventId: photo.eventId, type: 'photo-removed', photoId: photo.id })`. Gate on `photo.isFeatured === true && photo.status === 'ready'` (otherwise nothing was on the carousel \u2014 keeps SSE traffic minimal). Document the gate with a one-line comment.\n- In `apps/web/src/pages/participant/Foyer.tsx` the existing generic `es.onmessage` already refetches `/foyer-data` on every payload \u2014 verify the parsed event still flows through and add `'photo-removed'` to any `evt.type` allow-list. The carousel index clamp on `featured.length` change will pop the index back into range automatically.\n- Vitest backend: extend `apps/backend/src/__tests__/photos-route.test.ts` with two cases \u2014 (a) seed a `ready` + `isFeatured: true` photo, DELETE it, assert `foyerHub.broadcast` (spy) was called once with `type: 'photo-removed'` + correct ids; (b) seed a `processing` or non-featured photo, DELETE it, assert NO broadcast. Reuse the spy hub pattern already in the file.\n- Vitest web: extend the existing Foyer SSE test to push a synthetic `photo-removed` message and assert `/foyer-data` is refetched (mirrors the T18 photo-ready test).\n- Keep additive: no schema changes, no new endpoints, no behavioral change to delete semantics for non-featured photos.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "T21",
+    "title": "Block destructive photo ops on archived events (upload + isFeatured + delete return 409)",
+    "description": "Real product gap: spec defines `archived` as a terminal event status (POST /events/:id/archive exists) but the photo routes don't gate on it. Today an organizer can still `POST /events/:id/photos`, `PATCH /photos/:id` (toggle isFeatured), and `DELETE /photos/:id` against an archived event \u2014 confusing for the user and means the foyer carousel and Photi billing keep running on a 'closed' event.\n\nDo:\n- In `apps/backend/src/routes/photos.ts` `ownerEvent()` helper, after the owner check, also reject when `event.status === 'archived'` with `reply.code(409).send({ code: 'event_archived' })`. Apply to `POST /events/:id/photos` (upload) and any path that uses `ownerEvent`. For `DELETE /photos/:id` and `PATCH /photos/:id` (which use `ownerPhoto`), add the same check there: if the parent event is `archived`, return 409 `event_archived`. Read carefully \u2014 DELETE during archive is debatable; pick BLOCKING (matches 'closed' semantics) and document with a one-line comment so the rule is unambiguous.\n- Do NOT touch the events route \u2014 `PATCH /events/:id`, `POST /events/:id/publish`, and `POST /events/:id/archive` itself should still be reachable so the organizer can rename / unarchive (if unarchive exists; otherwise leave alone).\n- Do NOT block read endpoints (GET photos, foyer-data, my-photos) \u2014 archived events should still display existing matches to participants.\n- Vitest:\n  - photos-route test: archive an event, then `POST /events/:id/photos` \u2192 409 `event_archived`, no Photo row, no Job row.\n  - photos-route test: archive an event with an existing photo, then `PATCH /photos/:id { isFeatured: true }` \u2192 409, no foyer broadcast.\n  - photos-route test: archive an event with an existing photo, then `DELETE /photos/:id` \u2192 409, photo + storage still present.\n  - Existing happy-path tests must still pass (events default to `draft` / `live`).\n- Keep additive: no schema changes; only widening the gate inside existing handlers.",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "A1-1",
+    "title": "NewEvent form is missing the cover (kapak) upload control",
+    "description": "User explicitly listed `/events/new` fields as 'ba\u015fl\u0131k, tarih, kapak y\u00fckleme, marka rengi + logo' (verbatim). The current form at `apps/web/src/pages/organizer/NewEvent.tsx` (lines 47-110) only renders inputs for title, startsAt, endsAt, brand color, and a logo URL \u2014 there is NO cover image input, neither a file upload nor a coverImageUrl text field. Backend `EventLanding` (`apps/web/src/pages/participant/EventLanding.tsx` lines 44-49) already renders `event.coverImageUrl` if present, and `UpdateEventInput` in `packages/shared/src/event.ts` (line 34) accepts `coverImageUrl`, so the data path exists \u2014 only the create-form UI is missing.\n\nDo:\n- Add a 'Kapak g\u00f6rseli' control to `NewEvent.tsx`. Two implementation options \u2014 pick ONE and ship it end-to-end:\n  1. **File upload** (matches the literal Turkish 'y\u00fckleme'): add `<input type='file' accept='image/*'>`, on submit POST the file to a new backend endpoint that stores it via the existing local storage adapter under `events/{eventId}/cover.{ext}` and returns a signed URL; persist that URL into `event.coverImageUrl` (either in a follow-up `PATCH /events/:id` or pass through `CreateEventInput` after extending it to accept `coverImageUrl`). The simplest stitching is: after `POST /events` returns the new event id, multipart-upload the file to a new `POST /events/:id/cover` route that updates `coverImageUrl` to the storage's signed URL.\n  2. **URL field** (lighter, matches the existing logo URL pattern): add `<input type='url'>` for `coverImageUrl` directly into the form, include it in the create payload (extend `CreateEventInput` in `packages/shared/src/event.ts` with `coverImageUrl: z.string().url().optional()` and pass through in `apps/backend/src/routes/events.ts` POST handler). Do NOT remove or change the existing logo URL field.\n- Mirror the same control in `apps/web/src/pages/organizer/tabs/SettingsTab.tsx` so the cover can be edited later (the user listed Settings as 'temel d\u00fczenleme', and cover is a basic field).\n- Document the decision (file vs URL) with a one-line comment so future readers understand why.\n- Vitest:\n  - `apps/web/src/__tests__/organizer-pages.test.tsx`: assert NewEvent renders a control labelled by 'Kapak' and that submitting the form sends the cover value to the API (mock fetch).\n  - If you took the file-upload path, add a backend test under `apps/backend/src/__tests__/events-route.test.ts` (or a new `events-cover.test.ts`) that POSTs a multipart cover, asserts `coverImageUrl` is now set on the event row, and that the file is reachable via `/files/:key`.\n- Keep additive: no breaking changes to existing CreateEventInput consumers (existing tests must still pass).",
+    "status": "done",
+    "retries": 0
+  },
+  {
+    "id": "A1-2",
+    "title": "Foyer page header is missing the QR code (user spec: '\u00fcstte logo + QR')",
+    "description": "User wrote verbatim for `/e/:slug/foyer`: 'TV i\u00e7in public fullscreen karusel: isFeatured fotolar\u0131 6sn rotasyon, **\u00fcstte logo + QR**, altta canl\u0131 saya\u00e7 \u2026'. The current Foyer page (`apps/web/src/pages/participant/Foyer.tsx` lines 122-129) only renders the event title and an 'F = tam ekran' hint in the header. `Grep -n 'QR|qr|qrcode|QRCode'` against `Foyer.tsx` returns ZERO matches. There is no QR <img> element fetching `/events/:id/qr`, nor a client-side QR component generating one from the share URL. Without a QR on the TV the loop the user described \u2014 'attendees scan the foyer screen \u2192 join \u2192 selfie' \u2014 cannot happen at the venue.\n\nDo:\n- Render the event QR in the Foyer header. Two implementation options \u2014 pick ONE:\n  1. **Backend PNG fetched as a Blob** (preferred \u2014 already wired): add a public variant of `GET /events/:id/qr` (today the route requires owner auth via `ownerEvent`) that takes the **slug** (not id) so the unauthenticated foyer page can hit it. Either expose `GET /events/:slug/qr.png` returning the PNG with `Cache-Control: public, max-age=60`, or relax the existing route to allow public access when the request lacks `x-user-id` and the path uses slug. Wire the foyer header to fetch the PNG into a Blob URL the same way `QrTab.tsx` already does (pattern at `apps/web/src/pages/organizer/tabs/QrTab.tsx` lines 16-35). Do not break the existing organizer-only `GET /events/:id/qr` semantics.\n  2. **Client-side QR generation**: add a tiny QR rendering library (e.g. `qrcode` already in backend deps; install `qrcode.react` or render to canvas via `qrcode` in the browser) and produce the QR locally from the public share URL `${publicBase}/e/{slug}`. No backend change required.\n- Update the Foyer header (`apps/web/src/pages/participant/Foyer.tsx` lines 122-129) so the layout is: brand logo (use `event.brandingLogoUrl` from `foyer-data` if present, otherwise omit) on the left, event title in the middle, **QR image on the right** sized for TV legibility (~h-32 w-32 or larger). Keep the 'F = tam ekran' hint visible somewhere unobtrusive (e.g. footer corner) \u2014 do NOT delete it.\n- The brand logo IS already shown via `ParticipantLayout` but only at h-8 \u2014 that's fine; the gap is the QR. If you want, also surface the logo in the Foyer's own inner header for visibility on TV, but it's optional.\n- Vitest:\n  - Extend `apps/web/src/__tests__/participant-pages.test.tsx` (the existing Foyer test) to assert that the rendered Foyer contains an `<img>` with an alt attribute matching /qr/i (or whatever you choose) and that the src points to the QR endpoint or a generated data URL. Mock `fetch` if you took option (1).\n  - If you added a public QR endpoint, add a backend test in `apps/backend/src/__tests__/events-route.test.ts` (or new `foyer-qr.test.ts`) asserting the public route responds 200 image/png without `x-user-id` and 404 for unknown slugs.\n- Keep additive: no behavioural change to the existing organizer QR tab. The foyer fetch must not require auth.",
+    "status": "done",
+    "retries": 0
+  }
+]
