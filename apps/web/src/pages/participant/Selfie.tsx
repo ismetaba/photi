@@ -246,13 +246,28 @@ export default function Selfie() {
         </label>
       </details>
       {error && (
-        <p role="alert" className="text-sm text-red-700">
-          {error === "face_count"
-            ? "Selfie'de yüz tespit edilemedi ya da birden fazla yüz var."
-            : error === "camera_blocked"
-            ? "Kameraya erişilemedi. Galeri yüklemeyi deneyin."
-            : "Bir hata oluştu."}
-        </p>
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+          <div className="font-semibold">
+            {error === "face_count"
+              ? "Yüz tespit edilemedi"
+              : error === "camera_blocked"
+                ? "Kameraya erişilemedi"
+                : error === "missing_participant"
+                  ? "Etkinliğe katılım gerekli"
+                  : error === "upload_failed"
+                    ? "Selfie gönderilemedi"
+                    : "Bir hata oluştu"}
+          </div>
+          <p className="mt-1 text-[12px] text-red-800/85">
+            {error === "face_count"
+              ? "Selfie'de tek bir yüz görünmüyor. Tek kişi olduğundan ve yüzünün net göründüğünden emin ol."
+              : error === "camera_blocked"
+                ? "Tarayıcı kamera izni vermedi. Galeriden bir fotoğraf yüklemeyi dene."
+                : error === "upload_failed"
+                  ? "Backend cevap vermedi. Birkaç saniye sonra tekrar dene."
+                  : `Detay: ${error}`}
+          </p>
+        </div>
       )}
       <button
         type="button"

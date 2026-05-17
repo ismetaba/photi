@@ -16,8 +16,11 @@ import { LocalAdapter } from "./storage/localAdapter.js";
 import type { StorageAdapter } from "./storage/index.js";
 import { createFoyerHub, type InMemoryFoyerHub } from "./sse/foyerHub.js";
 import { createFaceEngine, type FaceEngine } from "./services/faceApi.js";
+import { DemoFaceEngine } from "./services/demoFaceEngine.js";
 import { JobRunner } from "./jobs/queue.js";
 import { env } from "./env.js";
+import { existsSync } from "node:fs";
+import path from "node:path";
 
 export interface BuildServerOptions {
   /** Override the SQLite filename. Defaults to `env.dbPath`. */
@@ -64,7 +67,14 @@ export async function buildServer(
     rootDir: opts.storageDir ?? env.storageDir,
   });
   const foyerHub = createFoyerHub();
-  const faceEngine = opts.faceEngine ?? createFaceEngine(env.modelDir);
+  // Default face engine: real tfjs model if the model files were downloaded,
+  // otherwise a zero-dep demo engine so the local stack runs end-to-end
+  // without `node scripts/download-models.mjs`.
+  const faceEngine =
+    opts.faceEngine ??
+    (existsSync(path.join(env.modelDir, "ssd_mobilenetv1_model-weights_manifest.json"))
+      ? createFaceEngine(env.modelDir)
+      : new DemoFaceEngine());
   const runner = new JobRunner({ db, storage, faceEngine, foyerHub });
 
   app.photi = { db, schema, storage, foyerHub, faceEngine, runner };
