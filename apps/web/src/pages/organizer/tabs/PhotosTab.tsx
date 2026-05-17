@@ -5,6 +5,7 @@ import { Dropzone } from "../../../components/Dropzone.js";
 import { Lightbox, type LightboxItem } from "../../../components/Lightbox.js";
 import { SkeletonGrid } from "../../../components/Skeleton.js";
 import { EmptyState } from "../../../components/EmptyState.js";
+import { fileUrl } from "../../../api/files.js";
 
 export interface PhotoListItem {
   id: string;
@@ -68,8 +69,8 @@ export function PhotosTab({ eventId }: Props) {
 
   const lightboxItems: LightboxItem[] = items.map((p) => ({
     id: p.id,
-    fullUrl: p.fullUrl,
-    thumbUrl: p.thumbUrl,
+    fullUrl: fileUrl(p.fullUrl),
+    thumbUrl: fileUrl(p.thumbUrl),
   }));
 
   return (
@@ -117,7 +118,7 @@ export function PhotosTab({ eventId }: Props) {
                 aria-label="Fotoğrafı büyüt"
               >
                 <img
-                  src={photo.thumbUrl}
+                  src={fileUrl(photo.thumbUrl)}
                   alt=""
                   loading="lazy"
                   className="aspect-square h-full w-full object-cover"

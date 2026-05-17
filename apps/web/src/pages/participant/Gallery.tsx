@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client.js";
 import { SkeletonGrid } from "../../components/Skeleton.js";
 import { EmptyState } from "../../components/EmptyState.js";
+import { fileUrl } from "../../api/files.js";
 
 interface MyPhotoItem {
   id: string;
@@ -80,12 +81,7 @@ export default function Gallery() {
 
   const downloadPhoto = async (item: MyPhotoItem) => {
     try {
-      const apiBase =
-        (import.meta.env?.VITE_API_BASE as string | undefined) ?? "http://localhost:3000";
-      const url = item.fullUrl.startsWith("http")
-        ? item.fullUrl
-        : `${apiBase}${item.fullUrl}`;
-      const res = await fetch(url, { credentials: "omit" });
+      const res = await fetch(fileUrl(item.fullUrl), { credentials: "omit" });
       if (!res.ok) throw new Error(String(res.status));
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -139,7 +135,7 @@ export default function Gallery() {
             className="group relative overflow-hidden rounded-xl border border-brand-navy/10 bg-white shadow-sm transition hover:shadow-md"
           >
             <img
-              src={p.thumbUrl}
+              src={fileUrl(p.thumbUrl)}
               alt=""
               loading="lazy"
               className="aspect-square w-full object-cover transition group-hover:scale-[1.02]"

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client.js";
+import { fileUrl } from "../../api/files.js";
 
 interface FoyerData {
   event: {
@@ -193,7 +194,7 @@ export default function Foyer() {
           <>
             <img
               key={current.id}
-              src={current.fullUrl}
+              src={fileUrl(current.fullUrl)}
               alt=""
               className="max-h-[78vh] max-w-[90vw] rounded-xl object-contain shadow-2xl motion-safe:animate-[foyerFade_900ms_ease-out]"
               data-testid="foyer-image"
